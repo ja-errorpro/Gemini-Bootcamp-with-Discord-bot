@@ -1,10 +1,10 @@
-import discord
+import interactions
+from interactions import slash_command, listen, SlashContext
 import google.generativeai as genai
 
-intents = discord.Intents.all()
+intents = interactions.Intents.ALL
 intents.message_content = True
-bot = discord.Client(intents=intents)
-tree = discord.app_commands.CommandTree(bot)
+bot = interactions.Client(intents=intents)
 
 # 請登入 https://discord.com/developers/applications，創建機器人，取得 Token 並填入此處
 DISCORD_TOKEN = "YOUR_DISCORD_TOKEN_HERE" 
@@ -38,58 +38,73 @@ generation_config = {
     "temperature": 1,
     "top_p": 0.95,
     "top_k": 40,
-    "max_output_tokens": 8192,
+    "max_output_tokens": 1024,
     "response_mime_type": "text/plain",
 }
 
 """
-如果你想啟用調整模型參數，請取消註解 generation_config=generation_config 這行。
+這段程式碼將列出可用的模型
+"""
+
+for m in genai.list_models():
+    if 'generateContent' in m.supported_generation_methods:
+        print(m.name)
+
+"""
 如果你想使用不同的模型，請修改 model_name="" 這行。
 
-請注意，如果你的 Request/Token 數量太多或者選到需要付費的模型，可能會被收錢。
+你可以自行決定要使用哪個版本的模型，
 
-截至目前(2024/12/15)，你可以使用的模型有：
-- "gemini-1.5-pro"
-- "gemini-1.5-flash"
-- "gemini-1.5-8b"
-- "gemini-2.0-flash-exp"
-- "gemini-exp-1206" (Preview)
-- "gemini-exp-1121" (Preview)
-- "learnlm-1.5-pro-experimental"
-- "gemma-2-2b-it"
-- "gemma-2-9b-it"
-- "gemma-2-27b-it"
+注意：若要進一步了解頻率限制和模型功能，請參考 Gemini 模型
 
-請參考 https://aistudio.google.com/ 右側模型列表來選擇適合的模型。
+此段程式碼來源：(https://ai.google.dev/gemini-api/docs/get-started/tutorial?lang=python)
 """
+
 model = genai.GenerativeModel(
-    model_name="MODEL_NAME_HERE",
+    model_name="gemini-1.5-pro",
     system_instruction=system_prompt,
-    # generation_config=generation_config,
+    generation_config=generation_config,
 )
 
 @bot.event
 async def on_ready():
-    await tree.sync()
     print(f'Logged in as {bot.user}')
 
 """
 定義一個斜線指令，根據使用者的 prompt 生成回應
 指令使用方法：/ask <prompt>
 """
-@tree.command(name="ask", description="Ask a question to the AI assistant.")
-async def ask(interaction: discord.Integration, *, user_prompt: str):
-    try:
-        prompts = [
-            {"role": "user", "parts": user_prompt}
+@slash_command(name = "ask",
+        description="與機器人聊天",
+        options=[
+            interactions.SlashCommandOption( # 定義指令選項
+            name="prompt", # 選項名稱，注意：必須與下方定義函數的參數名稱相同，如果你想使用不同的參數名稱，請在 @slash_command() 裡使用 argument_name 參數
+            description="輸入你想要對機器人說的話", # 選項的描述
+            type=3, # 這個參數型別是字串
+            required=True # True 表示這個參數必填
+            )
         ]
-        response = model.generate_content(prompts)
+) # 新增一個叫做 ask 的 command
+async def chat(ctx: SlashContext, prompt: str):
+    # 因為 Discord Bot 若沒有回應超過五秒就會 Timeout，因此需要使用 defer() 告訴 Discord 需要等待
+    await ctx.defer() 
+    # 設定使用者的 prompt
+    content = [
+        {
+            "role": "user",
+            "parts": prompt
+        }
+    ]
+    try:
+        response = model.generate_content(content)
         if response.text:
-            await interaction.response.send_message(response.text)
+            await ctx.send(response.text)
         else:
-            await interaction.response.send_message("發生錯誤，請再試一次")
+            await ctx.send("目前機器人無法回應，請稍後再試")
     except Exception as e:
-        await interaction.response.send_message(f"發生錯誤: {e}")
+        await ctx.send("目前機器人無法回應，請稍後再試: " + str(e))
+  
+    return
 
 if __name__ == '__main__':
-    bot.run(DISCORD_TOKEN)
+    bot.start(DISCORD_TOKEN)
